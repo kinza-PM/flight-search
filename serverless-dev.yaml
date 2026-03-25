@@ -1,0 +1,683 @@
+service: flightsSearch
+frameworkVersion: "3"
+
+custom:
+  serverlessSsmFetch:
+    USERNAME: /provesio/username~true
+    PASSWORD: /provesio/password~true
+    COMPANY_CODE: /provesio/companycode~true
+    X_API_KEY: /provesio/xapikey~true
+    BASE_URL: /provesio/baseurl~true
+    COGNITO_CLIENT_ID: /provesio/cognitouserid~true
+    GUEST_JWT_SECRET: /provesio/jwtguestsecret~true
+    COGNITO_USERPOOL_ID: /provesio/cognitouserpoolid~true
+    MAIN_ENDPOINT: /provesio/mainEndpoint
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: eu-west-1
+  stage: ${opt:stage, 'dev2'}
+
+  vpc:
+    securityGroupIds:
+    - !Ref LambdaSecurityGroup
+    subnetIds:
+    - subnet-025cd3d6f9357cc16
+    - subnet-0db7e348636b19ee6
+  iam:
+    role:
+      statements:
+      - Effect: Allow
+        Action:
+        - sqs:SendMessage
+        Resource:
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:add-log-queue-dev
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:async-booking-queue-${self:provider.stage}
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:update-expired-booking-queue-${self:provider.stage}
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:ingest-high-demand-queue-${self:provider.stage}
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:people-viewing-flights-queue-${self:provider.stage}
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:invoke-email-queue-${self:provider.stage}
+
+      - Effect: Allow
+        Action:
+        - s3:PutObject
+        - s3:PutObjectAcl
+        - s3:PutObjectTagging # ← REQUIRED
+        Resource:
+        - arn:aws:s3:::log-trace-${self:provider.stage}/*
+        - arn:aws:s3:::booked-ticket-${self:provider.stage}/*
+
+      - Effect: Allow
+        Action:
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:GetItem
+        - dynamodb:Scan
+        - dynamodb:Query
+        Resource:
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/prov-booking-${self:provider.stage}
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/flight-booking-${self:provider.stage}
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/logtrace-dev
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/logtrace-dev/index/GSI_Offer_Step
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/high-demand-flight-indicators-${self:provider.stage}
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/users-dev
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/people-viewing-flights-${self:provider.stage}
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/offer-viewing-${self:provider.stage}
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/countries-listing-dev
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/countries-listing-dev/index/GSI_IATA_CODE
+
+  environment:
+    META_SYNC_LISTING_TABLE: meta-sync-listing-${self:provider.stage}
+    STAGE: ${self:provider.stage}
+    USERNAME: ${self:custom.serverlessSsmFetch.USERNAME}
+    PASSWORD: "${self:custom.serverlessSsmFetch.PASSWORD}"
+    COMPANY_CODE: ${self:custom.serverlessSsmFetch.COMPANY_CODE}
+    X_API_KEY: ${self:custom.serverlessSsmFetch.X_API_KEY}
+    BASE_URL: ${self:custom.serverlessSsmFetch.BASE_URL}
+    REDIS_HOST: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+    REDIS_PORT: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Port
+    COGNITO_CLIENT_ID: ${self:custom.serverlessSsmFetch.COGNITO_CLIENT_ID}
+    GUEST_JWT_SECRET: ${self:custom.serverlessSsmFetch.GUEST_JWT_SECRET}
+    GUEST_TOKEN_TTL: "3600"
+    COGNITO_USERPOOL_ID: ${self:custom.serverlessSsmFetch.COGNITO_USERPOOL_ID}
+    COGNITO_REGION: eu-west-1
+    LOG_TRACE_SQS: https://sqs.${aws:region}.amazonaws.com/648485682397/add-log-queue-dev
+    LOG_TRACE_BUCKET: log-trace-${self:provider.stage}
+    PROV_BOOKING_TABLE: prov-booking-${self:provider.stage}
+    ASYNC_BOOKING_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/async-booking-queue-${self:provider.stage}
+    FLIGHT_BOOKING_TABLE: flight-booking-${self:provider.stage}
+    MAIN_ENDPOINT: ${self:custom.serverlessSsmFetch.MAIN_ENDPOINT}
+    UPDATE_EXIRED_BOOKING: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/update-expired-booking-queue-${self:provider.stage}
+    LOG_TRACE_TABLE: logtrace-dev
+    HIGH_DEMAND_INDICATOR_TABLE: high-demand-flight-indicators-${self:provider.stage}
+    HIGH_DEMAND_BOOKING_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/ingest-high-demand-queue-${self:provider.stage}
+    BOOKED_TICKET_BUCKET: booked-ticket-${self:provider.stage}
+    USERS_TABLE: users-dev
+    PEOPLE_VIEWING_FLIGHTS_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/people-viewing-flights-queue-${self:provider.stage}
+    PEOPLE_VIEWING_TABLE: people-viewing-flights-${self:provider.stage}
+    OFFER_VIEWING_TABLE : offer-viewing-${self:provider.stage}
+    PEOPLE_VIEWING_TTL: 10
+    INVOKE_EMAIL_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/invoke-email-queue-${self:provider.stage}
+    COUNTRIES_LISTING_TABLE: countries-listing-dev
+
+package:
+  patterns:
+  - '!./**' # 1. EXCLUDE EVERYTHING in the current directory
+
+  # 2. INCLUDE ALL SOURCE CODE AND CONFIG FILES
+  - handlers/** # Your Lambda handler files
+  - helper/** # Your utility/shared helper code
+  - lib/** # Your library code
+  - package.json # Required for dependency resolution
+  - package-lock.json # Highly recommended for predictable deployments
+  - .env # If your function needs to read this at runtime
+
+  # 3. INCLUDE ALL PRODUCTION DEPENDENCIES
+  - node_modules/** # All production dependencies
+
+  # 4. EXCLUSIONS (Cleanup)
+  - '!node_modules/aws-sdk/**' # Exclude AWS SDK (provided by Lambda runtime)
+  - '!node_modules/**/test/**' # Exclude test folders/files
+  - '!node_modules/**/tests/**'
+  - '!node_modules/**/docs/**'
+  - '!node_modules/**/examples/**'
+  - '!node_modules/**/*.md' # Exclude Markdown files
+  - '!node_modules/**/*.ts' # Exclude TypeScript source files
+  - '!node_modules/**/*.map' # Exclude source maps
+  excludeDevDependencies: true # Automatically excludes devDependencies listed in package.json
+
+functions:
+  flightSearch:
+    handler: handlers/flightSearch.handler
+    timeout: 30 # API Gateway limit
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /flightSearch
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  moreFareSearch:
+    handler: handlers/moreFareSearch.handler
+    timeout: 30
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /moreFareSearch
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  fareRuleSearch:
+    handler: handlers/fareRuleSearch.handler
+    timeout: 30
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /fareRuleSearch
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  flightProvBooking:
+    handler: handlers/flightProvBooking.handler
+    timeout: 30
+    memorySize: 512
+    layers:
+      - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+      - http:
+          path: /flightProvBooking
+          method: post
+          cors:
+            origin: '*'
+            headers:
+            - Content-Type
+            - X-API-KEY
+            - user_type
+            - user_id
+            - Authorization
+            allowCredentials: true
+
+  reservationFlightBooking:
+    handler: handlers/reservationFlightBooking.handler
+    timeout: 30
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /reservationFlightBooking
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  retrieveFlightBooking:
+    handler: handlers/retrieveFlightBooking.handler
+    timeout: 30
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /retrieveFlightBooking
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  asyncBookingWorker:
+    handler: handlers/asyncBookingWorker.handler
+    timeout: 120
+    events:
+    - sqs:
+        arn:
+          Fn::GetAtt:
+          - AsyncBookingQueue
+          - Arn
+
+  updateExpiredBooking:
+    handler: handlers/updateExpiredBooking.handler
+    timeout: 120
+    events:
+    - sqs:
+        arn:
+          Fn::GetAtt:
+          - updateExpiredBooking
+          - Arn
+
+  myBooking:
+    handler: handlers/myBooking.handler
+    timeout: 30 # API Gateway limit
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /myBooking
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  uploadTicket:
+    handler: handlers/uploadTicket.handler
+    timeout: 30 # API Gateway limit
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /uploadTicket
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  ingestHighDemandIndicator:
+    handler: handlers/ingestHighDemandIndicator.handler
+    timeout: 120
+    events:
+    - sqs:
+        arn:
+          Fn::GetAtt:
+          - IngestHighDemandIndicatorQueue
+          - Arn
+
+  uploadImagePreSignedUrl:
+    handler: handlers/uploadImagePreSignedUrl.handler
+    timeout: 30
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /uploadImagePreSignedUrl
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  peopleViewingFlights:
+    handler: handlers/peopleViewingFlights.handler
+    timeout: 120
+    events:
+    - sqs:
+        arn:
+          Fn::GetAtt:
+          - peopleViewingFlightsQueue
+          - Arn
+
+  ingestFlightsView:
+    handler: handlers/ingestFlightsView.handler
+    timeout: 30 # API Gateway limit
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:11
+    events:
+    - http:
+        path: /ingestFlightsView
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+  invokeEmail:
+    handler: handlers/invokeEmail.handler
+    timeout: 120
+    events:
+    - sqs:
+        arn:
+          Fn::GetAtt:
+          - InvokeEmailQueue
+          - Arn
+resources:
+  Resources:
+
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for Lambda
+        VpcId: vpc-0622a975b106604e0
+        SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+    RedisSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Allow Lambda to access Redis
+        VpcId: vpc-0622a975b106604e0
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+        SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+    ###########################
+    ### NAT + Private Routes
+    ###########################
+
+    NatEIP:
+      Type: AWS::EC2::EIP
+      Properties:
+        Domain: vpc
+
+    NatGateway:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId: !GetAtt NatEIP.AllocationId
+        SubnetId: subnet-04c7081fd81c6e637 # PUBLIC subnet
+        Tags:
+        - Key: Name
+          Value: flightSearch-NAT
+
+    PrivateSubnetRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: vpc-0622a975b106604e0
+
+    PrivateSubnetRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId: !Ref PrivateSubnetRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId: !Ref NatGateway
+
+    PrivateSubnet1RouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref PrivateSubnetRouteTable
+        SubnetId: subnet-025cd3d6f9357cc16
+
+    PrivateSubnet2RouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref PrivateSubnetRouteTable
+        SubnetId: subnet-0db7e348636b19ee6
+
+    ###########################
+    ### REDIS (ElastiCache)
+    ###########################
+
+    RedisSubnetGroup:
+      Type: AWS::ElastiCache::SubnetGroup
+      Properties:
+        CacheSubnetGroupName: redis-subnet-group-${self:provider.stage}
+        Description: Subnet group for Redis
+        SubnetIds:
+        - subnet-025cd3d6f9357cc16
+        - subnet-0db7e348636b19ee6
+
+    RedisReplicationGroup:
+      Type: AWS::ElastiCache::ReplicationGroup
+      Properties:
+        ReplicationGroupId: redis-rg-${self:provider.stage}
+        ReplicationGroupDescription: "Redis for ${self:provider.stage}"
+        Engine: redis
+        EngineVersion: "7.0"
+        CacheNodeType: cache.t3.micro
+        NumNodeGroups: 1
+        ReplicasPerNodeGroup: 0
+        AutomaticFailoverEnabled: false
+        TransitEncryptionEnabled: false
+        AtRestEncryptionEnabled: false
+        SecurityGroupIds:
+        - !Ref RedisSecurityGroup
+        CacheSubnetGroupName: !Ref RedisSubnetGroup
+
+    LogTraceBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: log-trace-${self:provider.stage}
+        LifecycleConfiguration:
+          Rules:
+          - Id: DeleteAfter1Day
+            Status: Enabled
+            ExpirationInDays: 1
+
+    BookedTicket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: booked-ticket-${self:provider.stage}
+        LifecycleConfiguration:
+          Rules:
+          - Id: DeleteAfter1Day
+            Status: Enabled
+            ExpirationInDays: 1
+
+    ProvBookingTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: prov-booking-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+        - AttributeName: offerId
+          AttributeType: S
+        KeySchema:
+        - AttributeName: offerId
+          KeyType: HASH # Partition Key
+
+    FlightBookingTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: flight-booking-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+        - AttributeName: bookingReferenceId
+          AttributeType: S
+        KeySchema:
+        - AttributeName: bookingReferenceId
+          KeyType: HASH
+
+    HighDemandIndicatorsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: high-demand-flight-indicators-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+
+        AttributeDefinitions:
+        - AttributeName: departureAirportCode
+          AttributeType: S
+        - AttributeName: routeAirline
+          AttributeType: S
+
+        KeySchema:
+        - AttributeName: departureAirportCode
+          KeyType: HASH
+        - AttributeName: routeAirline
+          KeyType: RANGE
+
+    PeopleViewingFlightsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: people-viewing-flights-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+
+        AttributeDefinitions:
+          - AttributeName: route
+            AttributeType: S
+          - AttributeName: cabinClass
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: route
+            KeyType: HASH
+          - AttributeName: cabinClass
+            KeyType: RANGE
+
+        SSESpecification:
+          SSEEnabled: true
+
+        TimeToLiveSpecification:
+          AttributeName: expireAt
+          Enabled: true  
+
+    OfferViewingTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: offer-viewing-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+
+        AttributeDefinitions:
+          - AttributeName: offerId
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: offerId
+            KeyType: HASH
+
+        SSESpecification:
+          SSEEnabled: true
+
+        TimeToLiveSpecification:
+          AttributeName: expireAt
+          Enabled: true
+
+    AsyncBookingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: async-booking-queue-${self:provider.stage}
+        VisibilityTimeout: 300 # Worker has 2 min to process
+        MessageRetentionPeriod: 86400 # 1 day retention
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ AsyncBookingDLQ, Arn ]
+          maxReceiveCount: 5
+
+    AsyncBookingDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: async-booking-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600 # 14 days
+
+    InvokeEmailQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: invoke-email-queue-${self:provider.stage}
+        VisibilityTimeout: 300 # Worker has 2 min to process
+        MessageRetentionPeriod: 86400 # 1 day retention
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ InvokeEmailDLQ, Arn ]
+          maxReceiveCount: 5
+
+    InvokeEmailDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: invoke-email-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600 # 14 days    
+
+    peopleViewingFlightsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: people-viewing-flights-queue-${self:provider.stage}
+        VisibilityTimeout: 300 # Worker has 2 min to process
+        MessageRetentionPeriod: 86400 # 1 day retention
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ peopleViewingFlightsDLQ, Arn ]
+          maxReceiveCount: 5
+
+    peopleViewingFlightsDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: people-viewing-flights-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600 # 14 days    
+
+    IngestHighDemandIndicatorQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ingest-high-demand-queue-${self:provider.stage}
+        VisibilityTimeout: 300 # Worker has 2 min to process
+        MessageRetentionPeriod: 86400 # 1 day retention
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ IngestHighDemandIndicatorDLQ, Arn ]
+          maxReceiveCount: 5
+
+    IngestHighDemandIndicatorDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ingest-high-demand-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600 # 14 days         
+
+    updateExpiredBooking:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: update-expired-booking-queue-${self:provider.stage}
+        VisibilityTimeout: 300 # Worker has 2 min to process
+        MessageRetentionPeriod: 86400 # 1 day retention
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ updateExpiredBookingDLQ, Arn ]
+          maxReceiveCount: 5
+
+    updateExpiredBookingDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: update-expired-booking-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600 # 14 days                    
+
+  Outputs:
+    RedisPrimaryEndpoint:
+      Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+      Export:
+        Name: redis-primary-endpoint-dev
+
+    RedisPrimaryPort:
+      Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Port
+      Export:
+        Name: redis-primary-port-dev
+
+plugins:
+- serverless-ssm-fetch
