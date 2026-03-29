@@ -13,7 +13,7 @@ export const handler = async (event) => {
         for (const record of event.Records) {
             const { offerId, createdAt } = JSON.parse(record.body);
             console.log("offerId*********", offerId);
-            console.log("createdAt*********", createdAt);
+            console.log("createdAt****************", createdAt);
 
             const command = new GetItemCommand({
                 TableName: process.env.PROV_BOOKING_TABLE, // replace with your table name
