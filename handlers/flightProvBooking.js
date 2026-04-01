@@ -1,25 +1,15 @@
 import axios from "axios";
 import { getSessionId, globalHeaders, InternalError, logTrace } from "../helper/helper.js";
-import { v4 as uuidv4 } from "uuid";
 import { verifyToken } from "./authorizerLayer.js";
-import {
-  DynamoDBClient,
-  PutItemCommand,
-  UpdateItemCommand
-} from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
-
 const region = process.env.region
-const dynamo = new DynamoDBClient({ region: region });
 const BASE_URL = process.env.BASE_URL;
-
 const sqsClient = new SQSClient({
   region: region,
 });
 
 export const handler = async (event) => {
   try {
-    console.log("prov booking api is working *******");
     const authVerification = await verifyToken(event);
     console.log(JSON.stringify(authVerification, null, 2));
 
@@ -45,8 +35,8 @@ export const handler = async (event) => {
 
     const body =
       typeof event.body === "string" ? JSON.parse(event.body) : event.body || {};
-    // const conversationId = uuidv4();
-
+    
+    const MAIN_ENDPOINT = process.env.MAIN_ENDPOINT
     const {
       offerId,
       journey,
@@ -75,6 +65,15 @@ export const handler = async (event) => {
     if (!paymentDetails || typeof paymentDetails !== "object") {
       return badRequest("paymentDetails must be a valid object");
     }
+    if (!paymentDetails?.paymentMode || (paymentDetails?.paymentMode === "CC" && !paymentDetails?.cardInfo)) {
+      return {
+        statusCode: 400,
+        ...globalHeaders(),
+        body: JSON.stringify({
+          message: "Missing required field: cardInfo (required for Credit Card payment)",
+        }),
+      };
+    }
 
     // Fetch session ID from upstream
     const { sessionId, conversationId } = await getSessionId(authVerification?.context?.sub, searchKey);
@@ -102,6 +101,8 @@ export const handler = async (event) => {
       paymentDetails,
     };
 
+    const startTime = Date.now();
+
     // Secure Axios config
     const axiosConfig = {
       timeout: 45000, // 15s timeout
@@ -114,9 +115,14 @@ export const handler = async (event) => {
       validateStatus: (status) => status < 500, // don't throw for 4xx
     };
 
+
     // API call
     const apiUrl = `${BASE_URL}/reservation/flight-prov-book`;
-    const response = await axios.post(apiUrl, bookingPayload, axiosConfig);
+    let response = await axios.post(apiUrl, bookingPayload, axiosConfig);
+    const endTime = Date.now();
+    const durationMs = endTime - startTime;
+
+    console.log(`main Upstream API response time: ${durationMs} ms`);
     // Handle 4xx from upstream
     if (response.status >= 400) {
       console.warn("Upstream API returned error:", response.status);
@@ -130,96 +136,61 @@ export const handler = async (event) => {
       };
     }
 
-    const provBookingObj = {
-      offerId: response?.data?.data[0]?.offerId,
-      priceChanged: response?.data?.data[0]?.priceChanged,
-      oldFare: response?.data?.data[0]?.oldFare,
-      newFare: response?.data?.data[0]?.newFare,
-      detail: JSON.stringify(response?.data?.data[0]?.detail),
-      financialInfo: JSON.stringify(response?.data?.data[0]?.financialInfo),
-      fare: JSON.stringify(response?.data?.data[0]?.fare),
-      userId: authVerification?.context?.sub,
-      userType: authVerification?.context?.userType,
-      request: bookingPayload,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }
+    // console.log("before fetch response?.data********", response?.data);
 
-    // 2️⃣ Insert into DynamoDB
-    const putCmd = new PutItemCommand({
-      TableName: process.env.PROV_BOOKING_TABLE,
-      Item: {
-        offerId: { S: provBookingObj.offerId },                 // PK
-        createdAt: { S: provBookingObj.createdAt },             // SK
+    if (response?.data?.asyncFetch) {
+      const startTime = Date.now();
 
-        priceChanged: { BOOL: provBookingObj.priceChanged },
-        oldFare: { N: String(provBookingObj.oldFare) },
-        newFare: { N: String(provBookingObj.newFare) },
+      try {
+        const fetchUrl = response?.data?.asyncFetch?.fetchUrl;
+        const url = `${MAIN_ENDPOINT}${fetchUrl}`;
+    
+        const res = await axios.get(url, {
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-KEY": process.env.X_API_KEY,
+            sessionId,
+            conversationId
+          }
+        });
 
-        detail: { S: provBookingObj.detail },
-        financialInfo: { S: provBookingObj.financialInfo },
-        fare: { S: provBookingObj.fare },
+        // console.log("res.data******", JSON.stringify(res.data, null, 2));
+        const endTime = Date.now();
+        const durationMs = endTime - startTime;
 
-        userId: { S: provBookingObj.userId },
-        userType: { S: provBookingObj.userType },
+        console.log(`fetch api Upstream API response time: ${durationMs} ms`);
+        if (res.data?.meta?.success === true && res.data?.data?.length > 0) {
+          response['data'] = res.data;
+        }
 
-        request: { S: JSON.stringify(provBookingObj.request) },
-        isValid: { BOOL: false },
-        status: { S: "pending" },
-        updatedAt: { S: provBookingObj.updatedAt },
-      },
-    });
+      } catch (err) {
+        console.error("Async fetch failed:", err?.message || err);
 
-    await dynamo.send(putCmd);
-
-    // Send SQS message for the UPDATE EXPIRED BOOKING 
-    await sqsClient.send(
-      new SendMessageCommand({
-        QueueUrl: process.env.UPDATE_EXIRED_BOOKING,
-        DelaySeconds: 300, // 5 minutes
-        MessageBody: JSON.stringify({
-          offerId: provBookingObj.offerId,
-          createdAt: provBookingObj.createdAt
-        })
-      })
-    );
-
-    const payload = {
-      id: uuidv4(),
-      userId: authVerification?.context?.sub,
-      userType: authVerification?.context?.userType,
-      request: JSON.stringify(provBookingObj.request),
-      response: JSON.stringify(response.data),
-      offerId: provBookingObj.offerId,
-      searchKey: searchKey,
-      stepCode: 40,
-      status: "active"
-    };
-
-    await logTrace(payload)
-    // Success response
-    console.log("response.data?.data[0].offerId*******", response.data?.data[0].offerId);
-
-    const updateOfferIdInLogTrace = new UpdateItemCommand({
-      TableName: process.env.LOG_TRACE_TABLE,
-      Key: {
-        id: { S: searchKey }, // PK
-      },
-      UpdateExpression: "SET offerId = :f, selectedFlightCode = :sfc",
-      ConditionExpression: "attribute_exists(id)",
-      ExpressionAttributeValues: {
-        ":f": { S: response.data?.data[0].offerId },
-        ":sfc": { S: journey[0].flightSegments[0].marketingAirline },
+        // Optional: log but DO NOT fail main flow
+        // fallback to original response
       }
-    });
+    }
+    // console.log("after fetch response?.data********", response?.data);
+    await sqsClient.send(new SendMessageCommand({
+      QueueUrl: process.env.ASYNC_PROV_BOOKING_QUEUE,
+      MessageBody: JSON.stringify({
+        data: JSON.stringify(response.data),
+        userId: authVerification?.context?.sub,
+        userType: authVerification?.context?.userType,
+        searchKey: searchKey,
+        marketingAirline: journey[0].flightSegments[0].marketingAirline,
+        bookingPayload: JSON.stringify(bookingPayload)
+      })
+    }));
 
-    await dynamo.send(updateOfferIdInLogTrace);
     return {
       statusCode: 200,
       ...globalHeaders(),
       body: JSON.stringify(response.data),
     };
+
   } catch (error) {
+    console.log("error********", error)
     return await InternalError(error)
   }
 };

@@ -38,6 +38,7 @@ provider:
         - arn:aws:sqs:${aws:region}:${aws:accountId}:ingest-high-demand-queue-${self:provider.stage}
         - arn:aws:sqs:${aws:region}:${aws:accountId}:people-viewing-flights-queue-${self:provider.stage}
         - arn:aws:sqs:${aws:region}:${aws:accountId}:invoke-email-queue-${self:provider.stage}
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:async-prov-booking-queue-${self:provider.stage}
 
       - Effect: Allow
         Action:
@@ -100,6 +101,9 @@ provider:
     PEOPLE_VIEWING_TTL: 10
     INVOKE_EMAIL_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/invoke-email-queue-${self:provider.stage}
     COUNTRIES_LISTING_TABLE: countries-listing-${self:provider.stage}
+    ASYNC_PROV_BOOKING_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/async-prov-booking-queue-${self:provider.stage}
+
+    
 
 package:
   patterns:
@@ -377,6 +381,16 @@ functions:
           Fn::GetAtt:
           - InvokeEmailQueue
           - Arn
+          
+  asyncProvBookingQueue:
+    handler: handlers/asyncProvBookingQueue.handler
+    timeout: 120
+    events:
+    - sqs:
+        arn:
+          Fn::GetAtt:
+          - AsyncProvBookingQueue
+          - Arn        
 resources:
   Resources:
 
@@ -666,7 +680,24 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: update-expired-booking-dlq-${self:provider.stage}
-        MessageRetentionPeriod: 1209600 # 14 days                    
+        MessageRetentionPeriod: 1209600 # 14 days 
+
+    AsyncProvBookingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: async-prov-booking-queue-${self:provider.stage}
+        VisibilityTimeout: 300 # Worker has 2 min to process
+        MessageRetentionPeriod: 86400 # 1 day retention
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ AsyncProvBookingDLQ, Arn ]
+          maxReceiveCount: 5
+
+    AsyncProvBookingDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: async-prov-booking-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600 # 14 days  
 
   Outputs:
     RedisPrimaryEndpoint:
