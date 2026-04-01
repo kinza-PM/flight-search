@@ -390,7 +390,27 @@ functions:
         arn:
           Fn::GetAtt:
           - AsyncProvBookingQueue
-          - Arn        
+          - Arn 
+
+  fetchAddPassengerCache:
+    handler: handlers/fetchAddPassengerCache.handler
+    timeout: 30 # API Gateway limit
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:${aws:region}:${aws:accountId}:layer:authorizerLayer:1
+    events:
+    - http:
+        path: /fetchAddPassengerCache
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true               
 resources:
   Resources:
 
