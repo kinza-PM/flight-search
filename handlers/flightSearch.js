@@ -9,13 +9,14 @@ import {
   DynamoDBClient,
   QueryCommand
 } from "@aws-sdk/client-dynamodb";
-
+import { airlineLogos } from "../helper/airlineLogos.js";
 const sqsClient = new SQSClient({
   region: process.env.region,
 });
 const dynamo = new DynamoDBClient({ region: process.env.region });
 
 import { unmarshall } from "@aws-sdk/util-dynamodb";
+
 
 const BASE_URL = process.env.BASE_URL;
 const MAIN_ENDPOINT = process.env.MAIN_ENDPOINT;
@@ -259,6 +260,39 @@ export const handler = async (event) => {
     const ttl = ttlFromSupplier || CACHE_TTL_DEFAULT;
     console.log("ttl**************", ttl);
 
+    if (searchResp?.data?.data?.length) {
+      console.log("STEP 1: data length =", searchResp.data.data.length);
+
+      searchResp.data.data = searchResp.data.data.map((offer, offerIndex) => {
+        console.log(`STEP 2: offer[${offerIndex}]`);
+
+        if (offer?.journey?.length) {
+          offer.journey = offer.journey.map((journey, journeyIndex) => {
+
+            if (journey?.flightSegments?.length) {
+              journey.flightSegments = journey.flightSegments.map((segment, segIndex) => {
+                const airlineCode = segment?.marketingAirline?.trim()?.toUpperCase();
+
+                console.log(`CODE:`, airlineCode);
+                console.log(`LOGO:`, airlineLogos[airlineCode]);
+
+                return {
+                  ...segment,
+                  marketingAirlineLogo: airlineLogos[airlineCode] || null
+                };
+              });
+            }
+
+            return journey;
+          });
+        }
+
+        return offer;
+      });
+
+    } else {
+      console.log("❌ No data found in response", JSON.stringify(searchResp, null, 2));
+    }
     // Write to redis (stringify)
     try {
       await redis.set(cacheKey, JSON.stringify(searchResp.data), "EX", ttl);

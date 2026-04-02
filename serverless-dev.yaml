@@ -39,6 +39,7 @@ provider:
         - arn:aws:sqs:${aws:region}:${aws:accountId}:people-viewing-flights-queue-${self:provider.stage}
         - arn:aws:sqs:${aws:region}:${aws:accountId}:invoke-email-queue-${self:provider.stage}
         - arn:aws:sqs:${aws:region}:${aws:accountId}:async-prov-booking-queue-${self:provider.stage}
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:send-email-notification-dev
 
       - Effect: Allow
         Action:
@@ -102,6 +103,7 @@ provider:
     INVOKE_EMAIL_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/invoke-email-queue-${self:provider.stage}
     COUNTRIES_LISTING_TABLE: countries-listing-dev
     ASYNC_PROV_BOOKING_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/async-prov-booking-queue-${self:provider.stage}
+    SEND_EMAIL_QUEUE : https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/send-email-notification-dev
 
 package:
   patterns:

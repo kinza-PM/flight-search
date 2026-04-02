@@ -80,7 +80,7 @@ export const handler = async (event) => {
                 id: uuidv4(),
                 userId: userId,
                 userType: userType,
-                request: JSON.stringify(provBookingObj.request),
+                request: provBookingObj.request,
                 response: JSON.stringify(data),
                 offerId: provBookingObj.offerId,
                 searchKey: searchKey,

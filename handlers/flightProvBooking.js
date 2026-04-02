@@ -35,7 +35,7 @@ export const handler = async (event) => {
 
     const body =
       typeof event.body === "string" ? JSON.parse(event.body) : event.body || {};
-    
+
     const MAIN_ENDPOINT = process.env.MAIN_ENDPOINT
     const {
       offerId,
@@ -136,15 +136,17 @@ export const handler = async (event) => {
       };
     }
 
-    // console.log("before fetch response?.data********", response?.data);
+    console.log("response?.data?.asyncFetch********", response?.data?.asyncFetch);
 
     if (response?.data?.asyncFetch) {
+
+
       const startTime = Date.now();
 
       try {
         const fetchUrl = response?.data?.asyncFetch?.fetchUrl;
         const url = `${MAIN_ENDPOINT}${fetchUrl}`;
-    
+        console.log("url************", url);
         const res = await axios.get(url, {
           headers: {
             "Content-Type": "application/json",

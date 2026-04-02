@@ -7,8 +7,13 @@ import {
     GetItemCommand,
     UpdateItemCommand
 } from "@aws-sdk/client-dynamodb";
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 const region = process.env.region
 const dynamo = new DynamoDBClient({ region: region });
+const sqsClient = new SQSClient({
+    region: region,
+});
+
 
 export const handler = async (event, context) => {
     try {
@@ -72,13 +77,14 @@ export const handler = async (event, context) => {
                 typeof data.request === "string"
                     ? JSON.parse(data.request)
                     : data.request;
+            console.log("requestObj*********", requestObj);
 
             // If still string, parse again
             if (typeof requestObj === "string") {
                 requestObj = JSON.parse(requestObj);
             }
 
-
+            console.log("requestObj*******", JSON.stringify(requestObj, null, 2));
             const journey = requestObj?.journey || [];
             const passengers = requestObj?.passengers || [];
             const flightSegment = journey[0].flightSegments
@@ -98,6 +104,8 @@ export const handler = async (event, context) => {
                 const flightDetailsObj = {
                     flightFrom: await queryByIata(departureAirportCode),
                     flightTo: await queryByIata(arrivalAirportCode),
+                    flightFromCode: departureAirportCode,
+                    flightToCode: arrivalAirportCode,
                     flightName: flightSegment[i].marketingAirline,
                     flightNumber: flightSegment[i].flightNumber,
                     cabinClass: flightSegment[i].cabinClass,
@@ -142,11 +150,15 @@ export const handler = async (event, context) => {
                 totalFare: fareDetails?.totalFare,
                 ticketImage: null
             }
-            console.log("passengerNames**********", passengerNames);
+            console.log("passengerNames************", passengerNames);
 
             console.log(JSON.stringify(emailData, null, 2));
-
+            await sqsClient.send(new SendMessageCommand({
+                QueueUrl: process.env.SEND_EMAIL_QUEUE,
+                MessageBody: JSON.stringify(emailData)
+            }));
         }
+
         return {
             statusCode: 200,
             ...globalHeaders(),
