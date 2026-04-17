@@ -27,7 +27,7 @@ export const handler = async (event) => {
 
 
         const cacheKey = `passenger_cache_${authVerification?.context?.sub}`
-        if (!passengers) {
+        if (!passengers && type !== 'fetch') {
             return {
                 ...globalHeaders(),
                 statusCode: 400,

@@ -12,6 +12,9 @@ custom:
     GUEST_JWT_SECRET: /provesio/jwtguestsecret~true
     COGNITO_USERPOOL_ID: /provesio/cognitouserpoolid~true
     MAIN_ENDPOINT: /provesio/mainEndpoint
+  prune:
+    automatic: true
+    number: 3  
 
 provider:
   name: aws
@@ -40,6 +43,7 @@ provider:
         - arn:aws:sqs:${aws:region}:${aws:accountId}:invoke-email-queue-${self:provider.stage}
         - arn:aws:sqs:${aws:region}:${aws:accountId}:async-prov-booking-queue-${self:provider.stage}
         - arn:aws:sqs:${aws:region}:${aws:accountId}:send-email-notification-${self:provider.stage}
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:user-search-preferences-queue-${self:provider.stage}
 
       - Effect: Allow
         Action:
@@ -104,7 +108,7 @@ provider:
     COUNTRIES_LISTING_TABLE: countries-listing-${self:provider.stage}
     ASYNC_PROV_BOOKING_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/async-prov-booking-queue-${self:provider.stage}
     SEND_EMAIL_QUEUE : https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/send-email-notification-${self:provider.stage}
-
+    USER_SEARCH_PREFERENCES_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/user-search-preferences-queue-${self:provider.stage}
     
 
 package:
@@ -413,6 +417,25 @@ functions:
           - user_id
           - Authorization
           allowCredentials: true               
+
+  getAllBooking:
+    handler: handlers/getAllBooking.handler
+    timeout: 30 # API Gateway limit
+    memorySize: 512
+    events:
+    - http:
+        path: /getAllBooking
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
 resources:
   Resources:
 
@@ -734,3 +757,4 @@ resources:
 
 plugins:
 - serverless-ssm-fetch
+- serverless-prune-plugin

@@ -1,6 +1,6 @@
 import axios from "axios";
 import { computeTTLFromSupplier, getSessionId, globalHeaders, InternalError, logTrace } from "../helper/helper.js";
-
+import airlines from 'airline-codes';
 import redis from "../lib/redisClient.js";
 import { createCacheKey } from "../lib/cacheKey.js";
 import { verifyToken } from "./authorizerLayer.js";
@@ -47,7 +47,8 @@ export const handler = async (event) => {
       flightSegments,
       preference,
       passengers,
-      maxConnections
+      maxConnections,
+      browserId
     } = body || {};
 
 
@@ -231,10 +232,10 @@ export const handler = async (event) => {
       }
     );
 
-    if (searchResp.data.data?.asyncFetch?.fetchUrl) {
+    if (searchResp?.data?.data?.asyncFetch?.fetchUrl) {
       console.log("final endpoint *********", `${MAIN_ENDPOINT}${searchResp.data.data?.asyncFetch?.fetchUrl}`);
 
-      searchResp = await axios.post(
+      const asyncResp = await axios.post(
         `${MAIN_ENDPOINT}${searchResp.data.data?.asyncFetch?.fetchUrl}`,
         searchPayload,
         {
@@ -247,9 +248,18 @@ export const handler = async (event) => {
           },
         }
       );
+      searchResp = asyncResp?.data?.data;
     }
 
-    console.log("searchResp final data*****", searchResp);
+
+    if (searchResp?.data?.data?.length === 0) {
+      return {
+        ...globalHeaders(),
+        statusCode: 200,
+        body: JSON.stringify({ message: searchResp?.data }),
+      };
+    }
+
 
     await attachOfferViewCounts(searchResp.data.data)
     // Save logs in DB here (only on MISS) ---- implement your DB write
@@ -272,13 +282,15 @@ export const handler = async (event) => {
             if (journey?.flightSegments?.length) {
               journey.flightSegments = journey.flightSegments.map((segment, segIndex) => {
                 const airlineCode = segment?.marketingAirline?.trim()?.toUpperCase();
+                console.log("checking full airline name **********", airlines.findWhere({ iata: airlineCode }).get('name'));
 
                 console.log(`CODE:`, airlineCode);
                 console.log(`LOGO:`, airlineLogos[airlineCode]);
 
                 return {
                   ...segment,
-                  marketingAirlineLogo: airlineLogos[airlineCode] || null
+                  marketingAirlineLogo: airlineLogos[airlineCode] || null,
+                  marketingAirlineFullName: airlines.findWhere({ iata: airlineCode }).get('name') || airlineCode
                 };
               });
             }
@@ -319,6 +331,22 @@ export const handler = async (event) => {
     await sqsClient.send(new SendMessageCommand({
       QueueUrl: process.env.PEOPLE_VIEWING_FLIGHTS_QUEUE,
       MessageBody: JSON.stringify(flightSegments)
+    }));
+
+
+    const userSearchPreferencesList = flightSegments.map(segment => ({
+      departureAirportCode: segment.departureAirportCode,
+      arrivalAirportCode: segment.arrivalAirportCode,
+      userId: authVerification?.context?.sub,
+      browserId: browserId,
+      userType: authVerification?.context?.userType
+    }));
+
+    console.log("userSearchPreferencesList***********", userSearchPreferencesList);
+
+    await sqsClient.send(new SendMessageCommand({
+      QueueUrl: process.env.USER_SEARCH_PREFERENCES_QUEUE,
+      MessageBody: JSON.stringify(userSearchPreferencesList)
     }));
 
     const randomNumber = Math.floor(Math.random() * 5) + 1;
