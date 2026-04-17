@@ -20,9 +20,6 @@ import { unmarshall } from "@aws-sdk/util-dynamodb";
 
 const BASE_URL = process.env.BASE_URL;
 const MAIN_ENDPOINT = process.env.MAIN_ENDPOINT;
-console.log("BASE_URL***********", BASE_URL);
-console.log("MAIN_ENDPOINT***********", MAIN_ENDPOINT);
-
 const CACHE_TTL_DEFAULT = Number(process.env.CACHE_TTL_DEFAULT || 120); // seconds
 
 export const handler = async (event) => {
@@ -203,7 +200,6 @@ export const handler = async (event) => {
       if (cached) {
         // Return cache hit
         const parsedCache = JSON.parse(cached);
-        console.info("cached data******** HIT for", cached);
         await attachOfferViewCounts(parsedCache.data);
         return {
           statusCode: 200,
@@ -233,8 +229,6 @@ export const handler = async (event) => {
     );
 
     if (searchResp?.data?.data?.asyncFetch?.fetchUrl) {
-      console.log("final endpoint *********", `${MAIN_ENDPOINT}${searchResp.data.data?.asyncFetch?.fetchUrl}`);
-
       const asyncResp = await axios.post(
         `${MAIN_ENDPOINT}${searchResp.data.data?.asyncFetch?.fetchUrl}`,
         searchPayload,
@@ -268,25 +262,16 @@ export const handler = async (event) => {
     // Decide TTL
     const ttlFromSupplier = computeTTLFromSupplier(searchResp.data);
     const ttl = ttlFromSupplier || CACHE_TTL_DEFAULT;
-    console.log("ttl**************", ttl);
 
     if (searchResp?.data?.data?.length) {
-      console.log("STEP 1: data length =", searchResp.data.data.length);
-
       searchResp.data.data = searchResp.data.data.map((offer, offerIndex) => {
-        console.log(`STEP 2: offer[${offerIndex}]`);
-
+      
         if (offer?.journey?.length) {
           offer.journey = offer.journey.map((journey, journeyIndex) => {
 
             if (journey?.flightSegments?.length) {
               journey.flightSegments = journey.flightSegments.map((segment, segIndex) => {
                 const airlineCode = segment?.marketingAirline?.trim()?.toUpperCase();
-                console.log("checking full airline name **********", airlines.findWhere({ iata: airlineCode }).get('name'));
-
-                console.log(`CODE:`, airlineCode);
-                console.log(`LOGO:`, airlineLogos[airlineCode]);
-
                 return {
                   ...segment,
                   marketingAirlineLogo: airlineLogos[airlineCode] || null,
@@ -313,9 +298,7 @@ export const handler = async (event) => {
       console.error("Redis SET error:", redisWriteErr);
       // Optionally push to SQS for async caching if required
     }
-    console.log("process.env.LOG_TRACE_SQS**********", process.env.LOG_TRACE_SQS);
-    console.log("searchResp.data?.commonData?.searchKey*dd********", searchResp.data?.commonData?.searchKey);
-
+   
     const payload = {
       id: searchResp.data?.commonData?.searchKey,
       userId: authVerification?.context?.sub,
@@ -341,8 +324,6 @@ export const handler = async (event) => {
       browserId: browserId,
       userType: authVerification?.context?.userType
     }));
-
-    console.log("userSearchPreferencesList***********", userSearchPreferencesList);
 
     await sqsClient.send(new SendMessageCommand({
       QueueUrl: process.env.USER_SEARCH_PREFERENCES_QUEUE,
