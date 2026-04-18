@@ -1,8 +1,13 @@
-import { attachOfferViewCounts, computeTTLFromSupplier, InternalError, logTrace } from "../helper/helper.js";
+import { attachOfferViewCounts, computeTTLFromSupplier, InternalError, logTrace, streamToString } from "../helper/helper.js";
 import redis from "../lib/redisClient.js";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import {
+    S3Client,
+    GetObjectCommand
+} from "@aws-sdk/client-s3";
+const s3 = new S3Client({ region: process.env.REGION });
 const region = process.env.REGION
-console.log("region*********",region);
+console.log("region*********", region);
 
 const sqsClient = new SQSClient({
     region: region,
@@ -14,8 +19,23 @@ export const handler = async (event) => {
 
     for (const record of event.Records) {
         try {
+            const body = JSON.parse(record.body);
+            console.log("body********", body);
 
-            let { flightData, userId, userType, searchPayload, flightSegments, browserId, cacheKey } = JSON.parse(record.body);
+            const { key } = body;
+
+            const s3Resp = await s3.send(
+                new GetObjectCommand({
+                    Bucket: process.env.FLIGHT_SEARCH_BUCKET,
+                    Key: key,
+                })
+            );
+
+            const fileContent = await streamToString(s3Resp.Body);
+            let { flightData, userId, userType, searchPayload, flightSegments, browserId, cacheKey } = JSON.parse(fileContent);
+
+            console.log("userType*********", userType);
+
             flightData = typeof flightData === 'string' ? JSON.parse(flightData) : flightData
             flightSegments = typeof flightSegments === 'string' ? JSON.parse(flightSegments) : flightSegments
 
@@ -26,7 +46,7 @@ export const handler = async (event) => {
             // Decide TTL
             const ttlFromSupplier = computeTTLFromSupplier(flightData);
             const ttl = ttlFromSupplier || CACHE_TTL_DEFAULT;
-           
+
             // Write to redis (stringify)
             try {
                 await redis.set(cacheKey, JSON.stringify(flightData), "EX", ttl);

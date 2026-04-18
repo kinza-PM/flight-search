@@ -1,5 +1,5 @@
 import axios from "axios";
-import { attachOfferViewCounts, getSessionId, globalHeaders, InternalError } from "../helper/helper.js";
+import { attachOfferViewCounts, flightSearchData, getSessionId, globalHeaders, InternalError } from "../helper/helper.js";
 import airlines from 'airline-codes';
 import redis from "../lib/redisClient.js";
 import { createCacheKey } from "../lib/cacheKey.js";
@@ -191,7 +191,7 @@ export const handler = async (event) => {
 
     // ---- CACHING: CHECK REDIS ----
     const cacheKey = createCacheKey({ flightSegments, passengers, preference, maxConnections }, "flightSearch");
-  
+
     try {
       console.info("Cache HIT for", cacheKey);
       const cached = await redis.get(cacheKey);
@@ -259,13 +259,18 @@ export const handler = async (event) => {
         if (offer?.journey?.length) {
           offer.journey = offer.journey.map((journey, journeyIndex) => {
 
+
             if (journey?.flightSegments?.length) {
               journey.flightSegments = journey.flightSegments.map((segment, segIndex) => {
                 const airlineCode = segment?.marketingAirline?.trim()?.toUpperCase();
+                const airline = airlines.findWhere({ iata: airlineCode });
+
                 return {
                   ...segment,
                   marketingAirlineLogo: airlineLogos[airlineCode] || null,
-                  marketingAirlineFullName: airlines.findWhere({ iata: airlineCode }).get('name') || airlineCode
+                  marketingAirlineFullName: airline
+                    ? airline.get('name')
+                    : airlineCode
                 };
               });
             }
@@ -286,19 +291,13 @@ export const handler = async (event) => {
       userId: authVerification?.context?.sub,
       userType: authVerification?.context?.userType,
       searchPayload: JSON.stringify(searchPayload),
-      flightSegments:  JSON.stringify(flightSegments),
+      flightSegments: JSON.stringify(flightSegments),
       browserId: browserId,
       cacheKey: cacheKey
     };
 
-    console.log("process.env.flightSearchOperationObj**********", process.env.flightSearchOperationObj);
-
-    await sqsClient.send(new SendMessageCommand({
-      QueueUrl: process.env.FLIGHT_SEARCH_OPERATION_QUEUE,
-      MessageBody: JSON.stringify(flightSearchOperationObj)
-    }));
-
-
+    await flightSearchData(flightSearchOperationObj)
+   
     const randomNumber = Math.floor(Math.random() * 5) + 1;
     searchResp['data']['highDemandIndicators'] = highDemandResult
     searchResp['data']['peopleViewing'] = randomNumber
@@ -308,9 +307,14 @@ export const handler = async (event) => {
       ...globalHeaders(),
       body: JSON.stringify(searchResp.data),
     };
-  
+
 
   } catch (error) {
+    console.error("Record failed", {
+      error: error.message,
+      stack: error.stack,
+    });
+
     return await InternalError(error)
   }
 };
