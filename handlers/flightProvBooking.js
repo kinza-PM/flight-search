@@ -2,7 +2,7 @@ import axios from "axios";
 import { getSessionId, globalHeaders, InternalError, logTrace } from "../helper/helper.js";
 import { verifyToken } from "./authorizerLayer.js";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
-const region = process.env.region
+const region = process.env.REGION
 const BASE_URL = process.env.BASE_URL;
 const sqsClient = new SQSClient({
   region: region,

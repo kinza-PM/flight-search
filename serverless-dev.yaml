@@ -43,16 +43,20 @@ provider:
         - arn:aws:sqs:${aws:region}:${aws:accountId}:invoke-email-queue-${self:provider.stage}
         - arn:aws:sqs:${aws:region}:${aws:accountId}:async-prov-booking-queue-${self:provider.stage}
         - arn:aws:sqs:${aws:region}:${aws:accountId}:send-email-notification-${self:provider.stage}
-        - arn:aws:sqs:${aws:region}:${aws:accountId}:user-search-preferences-queue-${self:provider.stage}
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:user-search-preferences-queue-dev
+        - arn:aws:sqs:${aws:region}:${aws:accountId}:flight-search-operation-queue-${self:provider.stage}
+
 
       - Effect: Allow
         Action:
         - s3:PutObject
         - s3:PutObjectAcl
         - s3:PutObjectTagging # ← REQUIRED
+        - s3:GetObject
         Resource:
         - arn:aws:s3:::log-trace-${self:provider.stage}/*
         - arn:aws:s3:::booked-ticket-${self:provider.stage}/*
+        - arn:aws:s3:::flight-search-data-${self:provider.stage}/*
 
       - Effect: Allow
         Action:
@@ -108,7 +112,11 @@ provider:
     COUNTRIES_LISTING_TABLE: countries-listing-dev
     ASYNC_PROV_BOOKING_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/async-prov-booking-queue-${self:provider.stage}
     SEND_EMAIL_QUEUE : https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/send-email-notification-dev
-    USER_SEARCH_PREFERENCES_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/user-search-preferences-queue-${self:provider.stage}
+    USER_SEARCH_PREFERENCES_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/user-search-preferences-queue-dev
+    FLIGHT_SEARCH_OPERATION_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/flight-search-operation-queue-${self:provider.stage}
+    CACHE_TTL_DEFAUL: 180
+    REGION: eu-west-1
+    FLIGHT_SEARCH_BUCKET: flight-search-data-${self:provider.stage}
 
 package:
   patterns:
@@ -435,6 +443,16 @@ functions:
           - Authorization
           allowCredentials: true
 
+  flightSearchOperation:
+    handler: handlers/flightSearchOperation.handler
+    timeout: 120
+    events:
+    - sqs:
+        arn:
+          Fn::GetAtt:
+          - FlightSearchOperationQueue
+          - Arn
+
 resources:
   Resources:
 
@@ -741,8 +759,34 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: async-prov-booking-dlq-${self:provider.stage}
-        MessageRetentionPeriod: 1209600 # 14 days                  
+        MessageRetentionPeriod: 1209600 # 14 days 
 
+    FlightSearchOperationQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: flight-search-operation-queue-${self:provider.stage}
+        VisibilityTimeout: 300 # Worker has 2 min to process
+        MessageRetentionPeriod: 86400 # 1 day retention
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [ FlightSearchOperationDLQ, Arn ]
+          maxReceiveCount: 5
+
+    FlightSearchOperationDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: flight-search-operation-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600 # 14 days 
+                            
+    FlightSearchData:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: flight-search-data-${self:provider.stage}
+        LifecycleConfiguration:
+          Rules:
+          - Id: DeleteAfter1Day
+            Status: Enabled
+            ExpirationInDays: 1  
   Outputs:
     RedisPrimaryEndpoint:
       Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address

@@ -1,5 +1,5 @@
 import axios from "axios";
-import { computeTTLFromSupplier, getSessionId, globalHeaders, InternalError, logTrace } from "../helper/helper.js";
+import { attachOfferViewCounts, flightSearchData, getSessionId, globalHeaders, InternalError } from "../helper/helper.js";
 import airlines from 'airline-codes';
 import redis from "../lib/redisClient.js";
 import { createCacheKey } from "../lib/cacheKey.js";
@@ -11,9 +11,9 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { airlineLogos } from "../helper/airlineLogos.js";
 const sqsClient = new SQSClient({
-  region: process.env.region,
+  region: process.env.REGION,
 });
-const dynamo = new DynamoDBClient({ region: process.env.region });
+const dynamo = new DynamoDBClient({ region: process.env.REGION });
 
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
@@ -25,7 +25,6 @@ const CACHE_TTL_DEFAULT = Number(process.env.CACHE_TTL_DEFAULT || 120); // secon
 export const handler = async (event) => {
   try {
     const authVerification = await verifyToken(event);
-    console.log(JSON.stringify(authVerification, null, 2));
     if (authVerification?.principalId === "unknown") {
       return {
         ...globalHeaders(),
@@ -35,7 +34,6 @@ export const handler = async (event) => {
         }),
       };
     }
-
 
     const body = typeof event.body === "string" ? JSON.parse(event.body) : event.body;
     let searchResp = ''
@@ -254,28 +252,24 @@ export const handler = async (event) => {
       };
     }
 
-
-    await attachOfferViewCounts(searchResp.data.data)
-    // Save logs in DB here (only on MISS) ---- implement your DB write
-    // await saveSearchLog({ request: searchPayload, response: searchResp.data, cacheKey, conversationId });
-
-    // Decide TTL
-    const ttlFromSupplier = computeTTLFromSupplier(searchResp.data);
-    const ttl = ttlFromSupplier || CACHE_TTL_DEFAULT;
-
     if (searchResp?.data?.data?.length) {
       searchResp.data.data = searchResp.data.data.map((offer, offerIndex) => {
-      
+
         if (offer?.journey?.length) {
           offer.journey = offer.journey.map((journey, journeyIndex) => {
+
 
             if (journey?.flightSegments?.length) {
               journey.flightSegments = journey.flightSegments.map((segment, segIndex) => {
                 const airlineCode = segment?.marketingAirline?.trim()?.toUpperCase();
+                const airline = airlines.findWhere({ iata: airlineCode });
+
                 return {
                   ...segment,
                   marketingAirlineLogo: airlineLogos[airlineCode] || null,
-                  marketingAirlineFullName: airlines.findWhere({ iata: airlineCode }).get('name') || airlineCode
+                  marketingAirlineFullName: airline
+                    ? airline.get('name')
+                    : airlineCode
                 };
               });
             }
@@ -290,46 +284,19 @@ export const handler = async (event) => {
     } else {
       console.log("❌ No data found in response", JSON.stringify(searchResp, null, 2));
     }
-    // Write to redis (stringify)
-    try {
-      await redis.set(cacheKey, JSON.stringify(searchResp.data), "EX", ttl);
-      console.info("Cached result", cacheKey, "ttl", ttl);
-    } catch (redisWriteErr) {
-      console.error("Redis SET error:", redisWriteErr);
-      // Optionally push to SQS for async caching if required
-    }
-   
-    const payload = {
-      id: searchResp.data?.commonData?.searchKey,
+
+    const flightSearchOperationObj = {
+      flightData: JSON.stringify(searchResp?.data),
       userId: authVerification?.context?.sub,
       userType: authVerification?.context?.userType,
-      request: searchPayload,
-      stepCode: 10,
-      status: "active",
-      searchKey: searchResp.data?.commonData?.searchKey
+      searchPayload: JSON.stringify(searchPayload),
+      flightSegments: JSON.stringify(flightSegments),
+      browserId: browserId,
+      cacheKey: cacheKey
     };
 
-    await logTrace(payload);
-
-    await sqsClient.send(new SendMessageCommand({
-      QueueUrl: process.env.PEOPLE_VIEWING_FLIGHTS_QUEUE,
-      MessageBody: JSON.stringify(flightSegments)
-    }));
-
-
-    const userSearchPreferencesList = flightSegments.map(segment => ({
-      departureAirportCode: segment.departureAirportCode,
-      arrivalAirportCode: segment.arrivalAirportCode,
-      userId: authVerification?.context?.sub,
-      browserId: browserId,
-      userType: authVerification?.context?.userType
-    }));
-
-    await sqsClient.send(new SendMessageCommand({
-      QueueUrl: process.env.USER_SEARCH_PREFERENCES_QUEUE,
-      MessageBody: JSON.stringify(userSearchPreferencesList)
-    }));
-
+    await flightSearchData(flightSearchOperationObj)
+   
     const randomNumber = Math.floor(Math.random() * 5) + 1;
     searchResp['data']['highDemandIndicators'] = highDemandResult
     searchResp['data']['peopleViewing'] = randomNumber
@@ -340,23 +307,15 @@ export const handler = async (event) => {
       body: JSON.stringify(searchResp.data),
     };
 
+
   } catch (error) {
+    console.error("Record failed", {
+      error: error.message,
+      stack: error.stack,
+    });
+
     return await InternalError(error)
   }
 };
 
 
-const attachOfferViewCounts = async (offers) => {
-  if (!Array.isArray(offers)) return offers;
-
-  const keys = offers.map(o => `${o.offerId}-counts`);
-  const counts = await Promise.all(keys.map(k => redis.get(k)));
-
-  offers.forEach((offer, index) => {
-    offer.offerViewCount = counts[index]
-      ? parseInt(counts[index])
-      : 0;
-  });
-
-  return offers;
-};

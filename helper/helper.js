@@ -9,8 +9,8 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { v4 as uuidv4 } from "uuid";
-const dynamo = new DynamoDBClient({ region: process.env.region });
-const region = process.env.region
+const dynamo = new DynamoDBClient({ region: process.env.REGION });
+const region = process.env.REGION
 const s3 = new S3Client({ region: region });
 const sqsClient = new SQSClient({
   region: region,
@@ -260,7 +260,7 @@ export const getConversationIdFromRedis = async (userId, searchKey, conversation
       console.log("checker item**********", Item);
       if (!Item) {
         console.log("in mock condition ****************");
-        
+
         return uuidv4();
       }
 
@@ -311,5 +311,58 @@ export const removedConverationId = async (userId, searchKey) => {
   }
 };
 
+export const flightSearchData = async (payload) => {
 
+  try {
+    const fileContent = JSON.stringify(payload);
+
+    // key example: logs/2025-01-01/<uuid>.json
+    const key = `flightSearchData/${Date.now()}-${payload.cacheKey}.json`;
+
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: process.env.FLIGHT_SEARCH_BUCKET,
+        Key: key,
+        Body: fileContent,
+        ContentType: "application/json",
+      })
+    );
+
+    const command = new SendMessageCommand({
+      QueueUrl: process.env.FLIGHT_SEARCH_OPERATION_QUEUE,
+      MessageBody: JSON.stringify({ key }),
+    });
+
+    await sqsClient.send(command);
+
+    return payload
+  } catch (error) {
+    return await InternalError(error)
+  }
+};
+
+
+export const attachOfferViewCounts = async (offers) => {
+  if (!Array.isArray(offers)) return offers;
+
+  const keys = offers.map(o => `${o.offerId}-counts`);
+  const counts = await Promise.all(keys.map(k => redis.get(k)));
+
+  offers.forEach((offer, index) => {
+    offer.offerViewCount = counts[index]
+      ? parseInt(counts[index])
+      : 0;
+  });
+
+  return offers;
+};
+
+
+export const streamToString = async (stream) =>
+  await new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (chunk) => chunks.push(chunk));
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    stream.on("error", reject);
+  });
 

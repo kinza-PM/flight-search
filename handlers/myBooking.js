@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
-const region = process.env.region
+const region = process.env.REGION
 const dynamo = new DynamoDBClient({ region: region });
 export const handler = async (event) => {
     try {
