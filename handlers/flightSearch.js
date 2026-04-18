@@ -1,5 +1,5 @@
 import axios from "axios";
-import { computeTTLFromSupplier, getSessionId, globalHeaders, InternalError, logTrace } from "../helper/helper.js";
+import { attachOfferViewCounts, getSessionId, globalHeaders, InternalError } from "../helper/helper.js";
 import airlines from 'airline-codes';
 import redis from "../lib/redisClient.js";
 import { createCacheKey } from "../lib/cacheKey.js";
@@ -11,9 +11,9 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { airlineLogos } from "../helper/airlineLogos.js";
 const sqsClient = new SQSClient({
-  region: process.env.region,
+  region: process.env.REGION,
 });
-const dynamo = new DynamoDBClient({ region: process.env.region });
+const dynamo = new DynamoDBClient({ region: process.env.REGION });
 
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
@@ -35,7 +35,6 @@ export const handler = async (event) => {
         }),
       };
     }
-
 
     const body = typeof event.body === "string" ? JSON.parse(event.body) : event.body;
     let searchResp = ''
@@ -192,7 +191,7 @@ export const handler = async (event) => {
 
     // ---- CACHING: CHECK REDIS ----
     const cacheKey = createCacheKey({ flightSegments, passengers, preference, maxConnections }, "flightSearch");
-
+  
     try {
       console.info("Cache HIT for", cacheKey);
       const cached = await redis.get(cacheKey);
@@ -254,18 +253,9 @@ export const handler = async (event) => {
       };
     }
 
-
-    await attachOfferViewCounts(searchResp.data.data)
-    // Save logs in DB here (only on MISS) ---- implement your DB write
-    // await saveSearchLog({ request: searchPayload, response: searchResp.data, cacheKey, conversationId });
-
-    // Decide TTL
-    const ttlFromSupplier = computeTTLFromSupplier(searchResp.data);
-    const ttl = ttlFromSupplier || CACHE_TTL_DEFAULT;
-
     if (searchResp?.data?.data?.length) {
       searchResp.data.data = searchResp.data.data.map((offer, offerIndex) => {
-      
+
         if (offer?.journey?.length) {
           offer.journey = offer.journey.map((journey, journeyIndex) => {
 
@@ -290,45 +280,24 @@ export const handler = async (event) => {
     } else {
       console.log("❌ No data found in response", JSON.stringify(searchResp, null, 2));
     }
-    // Write to redis (stringify)
-    try {
-      await redis.set(cacheKey, JSON.stringify(searchResp.data), "EX", ttl);
-      console.info("Cached result", cacheKey, "ttl", ttl);
-    } catch (redisWriteErr) {
-      console.error("Redis SET error:", redisWriteErr);
-      // Optionally push to SQS for async caching if required
-    }
-   
-    const payload = {
-      id: searchResp.data?.commonData?.searchKey,
+
+    const flightSearchOperationObj = {
+      flightData: JSON.stringify(searchResp?.data),
       userId: authVerification?.context?.sub,
       userType: authVerification?.context?.userType,
-      request: searchPayload,
-      stepCode: 10,
-      status: "active",
-      searchKey: searchResp.data?.commonData?.searchKey
+      searchPayload: JSON.stringify(searchPayload),
+      flightSegments:  JSON.stringify(flightSegments),
+      browserId: browserId,
+      cacheKey: cacheKey
     };
 
-    await logTrace(payload);
+    console.log("process.env.flightSearchOperationObj**********", process.env.flightSearchOperationObj);
 
     await sqsClient.send(new SendMessageCommand({
-      QueueUrl: process.env.PEOPLE_VIEWING_FLIGHTS_QUEUE,
-      MessageBody: JSON.stringify(flightSegments)
+      QueueUrl: process.env.FLIGHT_SEARCH_OPERATION_QUEUE,
+      MessageBody: JSON.stringify(flightSearchOperationObj)
     }));
 
-
-    const userSearchPreferencesList = flightSegments.map(segment => ({
-      departureAirportCode: segment.departureAirportCode,
-      arrivalAirportCode: segment.arrivalAirportCode,
-      userId: authVerification?.context?.sub,
-      browserId: browserId,
-      userType: authVerification?.context?.userType
-    }));
-
-    await sqsClient.send(new SendMessageCommand({
-      QueueUrl: process.env.USER_SEARCH_PREFERENCES_QUEUE,
-      MessageBody: JSON.stringify(userSearchPreferencesList)
-    }));
 
     const randomNumber = Math.floor(Math.random() * 5) + 1;
     searchResp['data']['highDemandIndicators'] = highDemandResult
@@ -339,6 +308,7 @@ export const handler = async (event) => {
       ...globalHeaders(),
       body: JSON.stringify(searchResp.data),
     };
+  
 
   } catch (error) {
     return await InternalError(error)
@@ -346,17 +316,3 @@ export const handler = async (event) => {
 };
 
 
-const attachOfferViewCounts = async (offers) => {
-  if (!Array.isArray(offers)) return offers;
-
-  const keys = offers.map(o => `${o.offerId}-counts`);
-  const counts = await Promise.all(keys.map(k => redis.get(k)));
-
-  offers.forEach((offer, index) => {
-    offer.offerViewCount = counts[index]
-      ? parseInt(counts[index])
-      : 0;
-  });
-
-  return offers;
-};

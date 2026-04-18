@@ -6,7 +6,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { InternalError } from "../helper/helper.js";
 
-const region = process.env.region
+const region = process.env.REGION
 
 const dynamo = new DynamoDBClient({ region: region });
 export const handler = async (event) => {

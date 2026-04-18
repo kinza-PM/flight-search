@@ -8,7 +8,7 @@ import {
     UpdateItemCommand
 } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
-const region = process.env.region
+const region = process.env.REGION
 const dynamo = new DynamoDBClient({ region: region });
 const sqsClient = new SQSClient({
     region: region,

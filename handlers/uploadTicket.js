@@ -2,7 +2,7 @@ import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import { globalHeaders, InternalError, logTrace } from "../helper/helper.js";
 import { verifyToken } from "./authorizerLayer.js";
-const region = process.env.region
+const region = process.env.REGION
 import {
     DynamoDBClient,
     UpdateItemCommand
