@@ -9,8 +9,8 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { v4 as uuidv4 } from "uuid";
-const dynamo = new DynamoDBClient({ region: process.env.region });
-const region = process.env.region
+const dynamo = new DynamoDBClient({ region: process.env.REGION });
+const region = process.env.REGION
 const s3 = new S3Client({ region: region });
 const sqsClient = new SQSClient({
   region: region,
@@ -260,7 +260,7 @@ export const getConversationIdFromRedis = async (userId, searchKey, conversation
       console.log("checker item**********", Item);
       if (!Item) {
         console.log("in mock condition ****************");
-        
+
         return uuidv4();
       }
 
@@ -311,5 +311,20 @@ export const removedConverationId = async (userId, searchKey) => {
   }
 };
 
+
+export const attachOfferViewCounts = async (offers) => {
+  if (!Array.isArray(offers)) return offers;
+
+  const keys = offers.map(o => `${o.offerId}-counts`);
+  const counts = await Promise.all(keys.map(k => redis.get(k)));
+
+  offers.forEach((offer, index) => {
+    offer.offerViewCount = counts[index]
+      ? parseInt(counts[index])
+      : 0;
+  });
+
+  return offers;
+};
 
 

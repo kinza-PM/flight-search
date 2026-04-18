@@ -5,7 +5,7 @@ import { verifyToken } from "./authorizerLayer.js";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
-const region = process.env.region
+const region = process.env.REGION
 import {
   DynamoDBClient,
   GetItemCommand,
