@@ -7,7 +7,6 @@ import {
 } from "@aws-sdk/client-s3";
 const s3 = new S3Client({ region: process.env.REGION });
 const region = process.env.REGION
-console.log("region*********", region);
 
 const sqsClient = new SQSClient({
     region: region,
@@ -20,8 +19,7 @@ export const handler = async (event) => {
     for (const record of event.Records) {
         try {
             const body = JSON.parse(record.body);
-            console.log("body********", body);
-
+         
             const { key } = body;
 
             const s3Resp = await s3.send(
@@ -34,8 +32,7 @@ export const handler = async (event) => {
             const fileContent = await streamToString(s3Resp.Body);
             let { flightData, userId, userType, searchPayload, flightSegments, browserId, cacheKey } = JSON.parse(fileContent);
 
-            console.log("userType*********", userType);
-
+        
             flightData = typeof flightData === 'string' ? JSON.parse(flightData) : flightData
             flightSegments = typeof flightSegments === 'string' ? JSON.parse(flightSegments) : flightSegments
 

@@ -25,7 +25,6 @@ const CACHE_TTL_DEFAULT = Number(process.env.CACHE_TTL_DEFAULT || 120); // secon
 export const handler = async (event) => {
   try {
     const authVerification = await verifyToken(event);
-    console.log(JSON.stringify(authVerification, null, 2));
     if (authVerification?.principalId === "unknown") {
       return {
         ...globalHeaders(),
