@@ -311,6 +311,36 @@ export const removedConverationId = async (userId, searchKey) => {
   }
 };
 
+export const flightSearchData = async (payload) => {
+
+  try {
+    const fileContent = JSON.stringify(payload);
+
+    // key example: logs/2025-01-01/<uuid>.json
+    const key = `flightSearchData/${Date.now()}-${payload.cacheKey}.json`;
+
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: process.env.FLIGHT_SEARCH_BUCKET,
+        Key: key,
+        Body: fileContent,
+        ContentType: "application/json",
+      })
+    );
+
+    const command = new SendMessageCommand({
+      QueueUrl: process.env.FLIGHT_SEARCH_OPERATION_QUEUE,
+      MessageBody: JSON.stringify({ key }),
+    });
+
+    await sqsClient.send(command);
+
+    return payload
+  } catch (error) {
+    return await InternalError(error)
+  }
+};
+
 
 export const attachOfferViewCounts = async (offers) => {
   if (!Array.isArray(offers)) return offers;
@@ -327,4 +357,12 @@ export const attachOfferViewCounts = async (offers) => {
   return offers;
 };
 
+
+export const streamToString = async (stream) =>
+  await new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (chunk) => chunks.push(chunk));
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    stream.on("error", reject);
+  });
 
