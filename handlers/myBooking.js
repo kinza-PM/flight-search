@@ -27,6 +27,8 @@ export const handler = async (event) => {
         const body = typeof event.body === "string" ? JSON.parse(event.body) : event.body || {};
         const allowedStatus = ["pending", "expired", "completed", "all", "cancelled"];
         const { status } = body;
+        let items = [];
+        let lastEvaluatedKey = undefined;
 
         if (!status) {
             return {
@@ -63,17 +65,23 @@ export const handler = async (event) => {
             expressionAttributeValues[":status"] = { S: status };
         }
 
-        const scanCmd = new ScanCommand({
-            TableName: process.env.PROV_BOOKING_TABLE,
-            FilterExpression: filterExpression,
-            ExpressionAttributeNames: expressionAttributeNames,
-            ExpressionAttributeValues: expressionAttributeValues,
-        });
+        do {
+            const scanCmd = new ScanCommand({
+                TableName: process.env.PROV_BOOKING_TABLE,
+                FilterExpression: filterExpression,
+                ExpressionAttributeNames: expressionAttributeNames,
+                ExpressionAttributeValues: expressionAttributeValues,
+                ExclusiveStartKey: lastEvaluatedKey,
+            });
 
-        const result = await dynamo.send(scanCmd);
+            const result = await dynamo.send(scanCmd);
 
-        // Safety check
-        const items = result.Items ?? [];
+            items.push(...(result.Items ?? []));
+
+            lastEvaluatedKey = result.LastEvaluatedKey;
+
+        } while (lastEvaluatedKey);
+
 
         const parsedItems = await Promise.all(
             items.map(async (item) => {
@@ -154,7 +162,7 @@ export const handler = async (event) => {
             statusCode: 200,
             ...globalHeaders(),
             body: JSON.stringify({
-                count: result.Count,
+                count: parsedItems.length,
                 items: parsedItems,
             }),
         };
