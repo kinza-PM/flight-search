@@ -76,6 +76,8 @@ provider:
         - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/offer-viewing-${self:provider.stage}
         - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/countries-listing-dev
         - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/countries-listing-dev/index/GSI_IATA_CODE
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/flight-fare-rules-${self:provider.stage}
+        - arn:aws:dynamodb:${aws:region}:${aws:accountId}:table/flight-fare-rules-${self:provider.stage}/index/GSI_OfferId_Supplier
 
   environment:
     META_SYNC_LISTING_TABLE: meta-sync-listing-${self:provider.stage}
@@ -117,6 +119,7 @@ provider:
     CACHE_TTL_DEFAUL: 180
     REGION: eu-west-1
     FLIGHT_SEARCH_BUCKET: flight-search-data-${self:provider.stage}
+    FLIGHT_FARE_RULES: flight-fare-rules-${self:provider.stage}
 
 package:
   patterns:
@@ -659,6 +662,36 @@ resources:
           AttributeName: expireAt
           Enabled: true
 
+    FlightFareRuleTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: flight-fare-rules-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST   # on-demand (recommended)
+
+        AttributeDefinitions:
+          - AttributeName: searchKey
+            AttributeType: S
+          - AttributeName: offerId
+            AttributeType: S
+          - AttributeName: SupplierOfferId   
+            AttributeType: S  
+
+        KeySchema:
+          - AttributeName: searchKey
+            KeyType: HASH   # Partition Key
+          - AttributeName: offerId
+            KeyType: RANGE  # Sort Key
+
+        GlobalSecondaryIndexes:
+          - IndexName: GSI_OfferId_Supplier
+            KeySchema:
+              - AttributeName: SupplierOfferId
+                KeyType: HASH
+              - AttributeName: searchKey
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL  
+            
     AsyncBookingQueue:
       Type: AWS::SQS::Queue
       Properties:

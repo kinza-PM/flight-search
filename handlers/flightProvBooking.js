@@ -181,7 +181,8 @@ export const handler = async (event) => {
         userType: authVerification?.context?.userType,
         searchKey: searchKey,
         marketingAirline: journey[0].flightSegments[0].marketingAirline,
-        bookingPayload: JSON.stringify(bookingPayload)
+        bookingPayload: JSON.stringify(bookingPayload),
+        offerId: offerId
       })
     }));
 
