@@ -3,6 +3,13 @@ import { getSessionId, globalHeaders, InternalError, logTrace } from "../helper/
 import { v4 as uuidv4 } from "uuid";
 import { verifyToken } from "./authorizerLayer.js";
 import redis from "../lib/redisClient.js";
+import {
+  DynamoDBClient,
+  PutItemCommand
+} from "@aws-sdk/client-dynamodb";
+import { marshall } from "@aws-sdk/util-dynamodb";
+
+const dynamo = new DynamoDBClient({ region: process.env.REGION });
 
 export const handler = async (event) => {
   try {
@@ -67,7 +74,7 @@ export const handler = async (event) => {
       return {
         statusCode: 200,
         ...globalHeaders(),
-        body: JSON.stringify(parsedCache), 
+        body: JSON.stringify(parsedCache),
       };
     }
 
@@ -111,6 +118,25 @@ export const handler = async (event) => {
       stepCode: 30,
       status: "active"
     };
+
+    const fareRuleDetail = {
+      searchKey: searchKey,
+      offerId: offerId,
+      userId: authVerification?.context?.sub,
+      userType: authVerification?.context?.userType,
+      bookingRules: JSON.stringify(response?.data?.data[0]?.bookingRules),
+      fareRules: JSON.stringify(response?.data?.data[0]?.fareRules),
+      miniFareRules: JSON.stringify(response?.data?.data[0]?.miniFareRules),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+
+    const putCmd = new PutItemCommand({
+      TableName: process.env.FLIGHT_FARE_RULES,
+      Item: marshall(fareRuleDetail),
+    });
+
+    await dynamo.send(putCmd);
 
     await logTrace(payload);
     // Success
