@@ -3,6 +3,8 @@ import { verifyToken } from "./authorizerLayer.js";
 import {
     DynamoDBClient,
     ScanCommand,
+    QueryCommand,
+    GetItemCommand
 } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 
@@ -76,7 +78,6 @@ export const handler = async (event) => {
         const parsedItems = await Promise.all(
             items.map(async (item) => {
                 const data = unmarshall(item);
-                console.log("data?.offerId*******", data?.offerId);
 
                 // Parse stringified JSON fields
                 ["detail", "fare", "financialInfo", "request"].forEach((field) => {
@@ -88,33 +89,62 @@ export const handler = async (event) => {
                 });
 
                 // 3️⃣ Fetch flightDetails from LOG_TRACE_TABLE where status = 10 and userId
-                const scanCmd = new ScanCommand({
+               
+                const logTraceDetails = new QueryCommand({
                     TableName: process.env.LOG_TRACE_TABLE,
-                    FilterExpression: "#oid = :offerId",
-                    ExpressionAttributeNames: {
-                        "#oid": "offerId",
-                    },
+                    IndexName: "GSI_Offer_Step",
+                    KeyConditionExpression: "offerId = :offerId AND stepCode = :stepCode",
                     ExpressionAttributeValues: {
                         ":offerId": { S: data.offerId },
+                        ":stepCode": { N: "40" }
                     },
+                    Limit: 1
                 });
-                const logResult = await dynamo.send(scanCmd);
-                const logItems = logResult.Items ?? [];
-                console.log("logItems*******", logItems, "data?.offerId*******", data?.offerId);
 
-                // 4️⃣ Parse and add flightDetails
-                data.flightDetails = logItems.map((logItem) => {
-                    const logData = unmarshall(logItem);
-                    ["request"].forEach((field) => {
-                        if (typeof logData[field] === "string") {
+                const logResult = await dynamo.send(logTraceDetails);
+              
+                const logItems = logResult.Items
+                    ? logResult.Items.map(item => unmarshall(item))
+                    : [];
+              
+                const logItem = logItems[0];
+
+                if (!logItem) {
+                    console.warn("No log item found for offerId", data?.offerId);
+                    return;
+                }
+
+                const fareRulesDetails = new QueryCommand({
+                    TableName: process.env.FLIGHT_FARE_RULES,
+                    IndexName: "GSI_OfferId_Supplier",
+                    KeyConditionExpression: "SupplierOfferId = :soi AND searchKey = :s",
+                    ExpressionAttributeValues: {
+                        ":soi": { S: logItem.offerId },
+                        ":s": { S: logItem.searchKey },
+                    },
+                    Limit: 1,
+                });
+
+                const fareRuleResult = await dynamo.send(fareRulesDetails);
+
+                // ✅ get first item only
+                const fareRuleItem = fareRuleResult.Items?.length
+                    ? unmarshall(fareRuleResult.Items[0])
+                    : null;
+
+                // ✅ parse JSON fields
+                if (fareRuleItem) {
+                    ["fareRules", "miniFareRules", "bookingRules"].forEach((field) => {
+                        if (typeof fareRuleItem[field] === "string") {
                             try {
-                                logData[field] = JSON.parse(logData[field]);
+                                fareRuleItem[field] = JSON.parse(fareRuleItem[field]);
                             } catch { }
                         }
                     });
-                    // parse any JSON string fields if needed
-                    return logData;
-                });
+                }
+
+                data.fareRulesDetails = fareRuleItem;
+
 
                 return data;
             })
@@ -129,6 +159,10 @@ export const handler = async (event) => {
             }),
         };
     } catch (error) {
+        console.error("Record failed", {
+            error: error.message,
+            stack: error.stack,
+        });
         return await InternalError(error)
     }
 };

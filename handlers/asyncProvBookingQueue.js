@@ -18,8 +18,8 @@ export const handler = async (event) => {
         const response = {}
 
         for (const record of event.Records) {
-            const { data, userId, userType, searchKey, marketingAirline, bookingPayload } = JSON.parse(record.body);
-
+            const { data, userId, userType, searchKey, marketingAirline, bookingPayload, offerId } = JSON.parse(record.body);
+          
             response['data'] = typeof data === "string" ? JSON.parse(data) : data;
 
             const provBookingObj = {
@@ -107,6 +107,23 @@ export const handler = async (event) => {
 
             await dynamo.send(updateOfferIdInLogTrace);
 
+            const updateOfferIdInFareRules = new UpdateItemCommand({
+                TableName: process.env.FLIGHT_FARE_RULES,
+                Key: {
+                    searchKey: { S: searchKey },
+                    offerId: { S: offerId }
+                },
+                UpdateExpression: "SET SupplierOfferId = :soi, userId = :uId, userType = :uT",
+                ConditionExpression: "attribute_exists(searchKey) AND attribute_exists(offerId)",
+                ExpressionAttributeValues: {
+                    ":soi": { S: response?.data?.data?.[0]?.offerId || "" },
+                    ":uId": { S: userId },
+                    ":uT": { S: userType }
+                }
+            });
+
+            await dynamo.send(updateOfferIdInFareRules);
+
         }
 
         return {
@@ -115,7 +132,10 @@ export const handler = async (event) => {
             // body: JSON.stringify(response.data),
         };
     } catch (error) {
-        console.log("error*********", error);
+        console.error("Record failed", {
+            error: error.message,
+            stack: error.stack,
+        });
 
         return await InternalError(error)
     }
