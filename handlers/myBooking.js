@@ -25,7 +25,7 @@ export const handler = async (event) => {
         }
 
         const body = typeof event.body === "string" ? JSON.parse(event.body) : event.body || {};
-        const allowedStatus = ["pending", "expired", "completed", "all","cancelled"];
+        const allowedStatus = ["pending", "expired", "completed", "all", "cancelled"];
         const { status } = body;
 
         if (!status) {
@@ -89,7 +89,7 @@ export const handler = async (event) => {
                 });
 
                 // 3️⃣ Fetch flightDetails from LOG_TRACE_TABLE where status = 10 and userId
-               
+
                 const logTraceDetails = new QueryCommand({
                     TableName: process.env.LOG_TRACE_TABLE,
                     IndexName: "GSI_Offer_Step",
@@ -102,11 +102,11 @@ export const handler = async (event) => {
                 });
 
                 const logResult = await dynamo.send(logTraceDetails);
-              
+
                 const logItems = logResult.Items
                     ? logResult.Items.map(item => unmarshall(item))
                     : [];
-              
+
                 const logItem = logItems[0];
 
                 if (!logItem) {
