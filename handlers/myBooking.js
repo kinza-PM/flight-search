@@ -25,7 +25,7 @@ export const handler = async (event) => {
         }
 
         const body = typeof event.body === "string" ? JSON.parse(event.body) : event.body || {};
-        const allowedStatus = ["pending", "expired", "completed", "all"];
+        const allowedStatus = ["pending", "expired", "completed", "all","cancelled"];
         const { status } = body;
 
         if (!status) {
