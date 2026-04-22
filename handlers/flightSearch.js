@@ -243,12 +243,13 @@ export const handler = async (event) => {
       searchResp = asyncResp?.data?.data;
     }
 
+    const offers = searchResp?.data?.data;
 
-    if (searchResp?.data?.data?.length === 0) {
+    if (!Array.isArray(offers) || offers.length === 0) {
       return {
         ...globalHeaders(),
         statusCode: 200,
-        body: JSON.stringify({ message: searchResp?.data }),
+        body: JSON.stringify({ message: searchResp?.data || "No data found" }),
       };
     }
 
@@ -282,7 +283,8 @@ export const handler = async (event) => {
       });
 
     } else {
-      console.log("❌ No data found in response", JSON.stringify(searchResp, null, 2));
+
+      console.log("❌ No data found in response");
     }
 
     const flightSearchOperationObj = {
@@ -296,7 +298,7 @@ export const handler = async (event) => {
     };
 
     await flightSearchData(flightSearchOperationObj)
-   
+
     const randomNumber = Math.floor(Math.random() * 5) + 1;
     searchResp['data']['highDemandIndicators'] = highDemandResult
     searchResp['data']['peopleViewing'] = randomNumber
