@@ -8,6 +8,7 @@ import {
     UpdateItemCommand
 } from "@aws-sdk/client-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
+import airports from 'airport-codes';
 const region = process.env.REGION
 const dynamo = new DynamoDBClient({ region: region });
 const sqsClient = new SQSClient({
@@ -101,9 +102,12 @@ export const handler = async (event, context) => {
                 let departureDateTime = flightSegment[i].departureDateTime
                 let arrivalDateTime = flightSegment[i].arrivalDateTime
 
+                const departureAirport = airports.findWhere({ iata: departureAirportCode });
+                const arrivalAirport = airports.findWhere({ iata: arrivalAirportCode });
+
                 const flightDetailsObj = {
-                    flightFrom: await queryByIata(departureAirportCode),
-                    flightTo: await queryByIata(arrivalAirportCode),
+                    flightFrom: departureAirport?.get('city') || null,
+                    flightTo: arrivalAirport?.get('city') || null,
                     flightFromCode: departureAirportCode,
                     flightToCode: arrivalAirportCode,
                     flightName: flightSegment[i].marketingAirline,
