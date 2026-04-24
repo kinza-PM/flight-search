@@ -7,6 +7,8 @@ import {
     GetItemCommand
 } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
+import { airlineLogos } from "../helper/airlineLogos.js";
+import airlines from 'airline-codes'
 
 const region = process.env.REGION
 const dynamo = new DynamoDBClient({ region: region });
@@ -91,7 +93,28 @@ export const handler = async (event) => {
                 ["detail", "fare", "financialInfo", "request"].forEach((field) => {
                     if (typeof data[field] === "string") {
                         try {
+
+
                             data[field] = JSON.parse(data[field]);
+                            if (field === 'request') {
+                                const flightSegments = data[field]?.journey?.[0]?.flightSegments;
+
+                                if (flightSegments?.length) {
+                                    data[field].journey[0].flightSegments = flightSegments.map((segment) => {
+                                        const airlineCode = segment?.marketingAirline?.trim()?.toUpperCase();
+                                        const airline = airlines.findWhere({ iata: airlineCode });
+
+                                        return {
+                                            ...segment,
+                                            marketingAirlineLogo: airlineLogos[airlineCode] || null,
+                                            marketingAirlineFullName: airline
+                                                ? airline.get('name')
+                                                : airlineCode
+                                        };
+                                    });
+                                }
+                            }
+
                         } catch { }
                     }
                 });

@@ -56,7 +56,7 @@ provider:
         Resource:
         - arn:aws:s3:::log-trace-${self:provider.stage}/*
         - arn:aws:s3:::booked-ticket-${self:provider.stage}/*
-        - arn:aws:s3:::flight-search-data-${self:provider.stage}/*
+        - arn:aws:s3:::flight-search-data-${self:provider.stage}-${aws:accountId}/*
 
       - Effect: Allow
         Action:
@@ -118,7 +118,7 @@ provider:
     FLIGHT_SEARCH_OPERATION_QUEUE: https://sqs.${aws:region}.amazonaws.com/${aws:accountId}/flight-search-operation-queue-${self:provider.stage}
     CACHE_TTL_DEFAUL: 180
     REGION: eu-west-1
-    FLIGHT_SEARCH_BUCKET: flight-search-data-${self:provider.stage}
+    FLIGHT_SEARCH_BUCKET: flight-search-data-${self:provider.stage}-${aws:accountId}
     FLIGHT_FARE_RULES: flight-fare-rules-${self:provider.stage}
 
 package:
@@ -814,7 +814,7 @@ resources:
     FlightSearchData:
       Type: AWS::S3::Bucket
       Properties:
-        BucketName: flight-search-data-${self:provider.stage}
+        BucketName: flight-search-data-${self:provider.stage}-${aws:accountId}
         LifecycleConfiguration:
           Rules:
           - Id: DeleteAfter1Day
